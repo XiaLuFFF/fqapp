@@ -1,0 +1,77 @@
+name: iOS unsigned IPA
+
+# 放到 fork 仓库的 .github/workflows/ios-build.yml
+# 然后 Actions 页面 → "iOS unsigned IPA" → Run workflow
+# 跑完在 Artifacts 里下载 fqapp-ios-unsigned.zip（内含未签名 ipa）
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.47.9'
+
+jobs:
+  ios:
+    # GitHub 的 Xcode 27 arm64 预览镜像，自带 Xcode 27 + CocoaPods 1.17.0
+    # 若提示 label 不可用，改成 macos-26（同样含 Xcode 27 预览）
+    runs-on: xcode-27
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          pod --version
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Set up Rust
+        run: |
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          rustc --version
+
+      - name: Disable Swift Package Manager
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build Rust static lib for iOS
+        run: |
+          chmod +x scripts/build_rust_ios.sh
+          ./scripts/build_rust_ios.sh
+          ls -la ios/Frameworks/
+
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        run: |
+          rm -rf /tmp/pack && mkdir -p /tmp/pack/Payload
+          ditto build/ios/iphoneos/Runner.app /tmp/pack/Payload/Runner.app
+          cd /tmp/pack && zip -qry fqapp_ios_unsigned.ipa Payload
+          ls -lh /tmp/pack/fqapp_ios_unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: fqapp-ios-unsigned
+          path: /tmp/pack/fqapp_ios_unsigned.ipa
+          retention-days: 30
